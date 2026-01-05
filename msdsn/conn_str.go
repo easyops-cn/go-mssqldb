@@ -75,10 +75,11 @@ type Config struct {
 	PacketSize  uint16
 }
 
-func SetupTLS(certificate string, insecureSkipVerify bool, hostInCertificate string) (*tls.Config, error) {
+func SetupTLS(certificate string, insecureSkipVerify bool, hostInCertificate string, minVersion uint16) (*tls.Config, error) {
 	config := tls.Config{
 		ServerName:         hostInCertificate,
 		InsecureSkipVerify: insecureSkipVerify,
+		MinVersion:         minVersion,
 
 		// fix for https://github.com/denisenkom/go-mssqldb/issues/166
 		// Go implementation of TLS payload size heuristic algorithm splits single TDS package to multiple TCP segments,
@@ -256,8 +257,25 @@ func Parse(dsn string) (Config, map[string]string, error) {
 	}
 
 	if p.Encryption != EncryptionDisabled {
+		// Parse tlsmin parameter, default to TLS 1.2
+		tlsMinVersion := uint16(tls.VersionTLS12)
+		if tlsMin, ok := params["tlsmin"]; ok && tlsMin != "" {
+			switch strings.ToLower(tlsMin) {
+			case "1.0":
+				tlsMinVersion = tls.VersionTLS10
+			case "1.1":
+				tlsMinVersion = tls.VersionTLS11
+			case "1.2":
+				tlsMinVersion = tls.VersionTLS12
+			case "1.3":
+				tlsMinVersion = tls.VersionTLS13
+			default:
+				return p, params, fmt.Errorf("invalid tlsmin '%s': valid values are 1.0, 1.1, 1.2, 1.3", tlsMin)
+			}
+		}
+
 		var err error
-		p.TLSConfig, err = SetupTLS(certificate, trustServerCert, hostInCertificate)
+		p.TLSConfig, err = SetupTLS(certificate, trustServerCert, hostInCertificate, tlsMinVersion)
 		if err != nil {
 			return p, params, fmt.Errorf("failed to setup TLS: %w", err)
 		}
