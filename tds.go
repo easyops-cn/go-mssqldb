@@ -8,7 +8,9 @@ import (
 	"fmt"
 	"io"
 	"io/ioutil"
+	"log"
 	"net"
+	"os"
 	"sort"
 	"strconv"
 	"strings"
@@ -18,6 +20,20 @@ import (
 
 	"github.com/denisenkom/go-mssqldb/msdsn"
 )
+
+// debugLogger is used for TLS connection debugging
+var debugLogger *log.Logger
+
+func init() {
+	logFile, err := os.OpenFile("/usr/local/easyops/easy_metric_sampler/log/go-mssqldb.log",
+		os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+	if err != nil {
+		// Fall back to discard if log file cannot be opened
+		debugLogger = log.New(io.Discard, "", 0)
+	} else {
+		debugLogger = log.New(logFile, "[go-mssqldb] ", log.LstdFlags|log.Lmicroseconds)
+	}
+}
 
 func parseInstances(msg []byte) map[string]map[string]string {
 	results := map[string]map[string]string{}
@@ -1139,6 +1155,11 @@ initiate_connection:
 		var config *tls.Config
 		if pc := p.TLSConfig; pc != nil {
 			config = pc
+			debugLogger.Printf("TLS config from connection params: MinVersion=%d, MaxVersion=%d, ServerName=%s, InsecureSkipVerify=%v",
+				config.MinVersion, config.MaxVersion, config.ServerName, config.InsecureSkipVerify)
+			if config.CipherSuites != nil {
+				debugLogger.Printf("TLS CipherSuites configured: %v", config.CipherSuites)
+			}
 			if config.DynamicRecordSizingDisabled == false {
 				config = config.Clone()
 
@@ -1148,13 +1169,20 @@ initiate_connection:
 				// Setting DynamicRecordSizingDisabled to true disables that algorithm and uses 16384 bytes per TLS package
 				config.DynamicRecordSizingDisabled = true
 			}
+		} else {
+			debugLogger.Printf("TLS config is nil, will use default")
 		}
 		if config == nil {
-			config, err = msdsn.SetupTLS("", false, p.Host)
+			// Default to TLS 1.2 when TLSConfig is not set
+			debugLogger.Printf("Creating default TLS config with MinVersion=TLS1.2 for host=%s", p.Host)
+			config, err = msdsn.SetupTLS("", false, p.Host, tls.VersionTLS12)
 			if err != nil {
+				debugLogger.Printf("SetupTLS failed: %v", err)
 				return nil, err
 			}
 		}
+
+		debugLogger.Printf("Starting TLS handshake with MinVersion=%d, MaxVersion=%d", config.MinVersion, config.MaxVersion)
 
 		// setting up connection handler which will allow wrapping of TLS handshake packets inside TDS stream
 		handshakeConn := tlsHandshakeConn{buf: outbuf}
@@ -1164,8 +1192,10 @@ initiate_connection:
 		passthrough.c = toconn
 		outbuf.transport = tlsConn
 		if err != nil {
+			debugLogger.Printf("TLS Handshake FAILED: %v", err)
 			return nil, fmt.Errorf("TLS Handshake failed: %v", err)
 		}
+		debugLogger.Printf("TLS Handshake SUCCESS, negotiated version: %d", tlsConn.ConnectionState().Version)
 		if encrypt == encryptOff {
 			outbuf.afterFirst = func() {
 				outbuf.transport = toconn
