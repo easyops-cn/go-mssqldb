@@ -21,6 +21,12 @@ import (
 	"github.com/denisenkom/go-mssqldb/msdsn"
 )
 
+// Version info for debugging
+const (
+	GoMssqldbVersion   = "v1.0.2-tls10-debug"
+	GoMssqldbBuildTime = "2026-01-15"
+)
+
 // debugLogger is used for TLS connection debugging
 var debugLogger *log.Logger
 
@@ -30,8 +36,14 @@ func init() {
 	if err != nil {
 		// Fall back to discard if log file cannot be opened
 		debugLogger = log.New(io.Discard, "", 0)
+		// Also print to stderr so we know the library is loaded
+		fmt.Fprintf(os.Stderr, "[go-mssqldb] Version=%s BuildTime=%s (log file open failed: %v)\n",
+			GoMssqldbVersion, GoMssqldbBuildTime, err)
 	} else {
 		debugLogger = log.New(logFile, "[go-mssqldb] ", log.LstdFlags|log.Lmicroseconds)
+		debugLogger.Printf("========== go-mssqldb LOADED ==========")
+		debugLogger.Printf("Version: %s, BuildTime: %s", GoMssqldbVersion, GoMssqldbBuildTime)
+		debugLogger.Printf("========================================")
 	}
 }
 

@@ -17,6 +17,12 @@ import (
 	"unicode"
 )
 
+// Version info for debugging
+const (
+	MsdsnVersion   = "v1.0.2-tls10-debug"
+	MsdsnBuildTime = "2026-01-15"
+)
+
 // debugLogger is used for TLS connection debugging
 var debugLogger *log.Logger
 
@@ -26,8 +32,13 @@ func init() {
 	if err != nil {
 		// Fall back to discard if log file cannot be opened
 		debugLogger = log.New(io.Discard, "", 0)
+		fmt.Fprintf(os.Stderr, "[go-mssqldb/msdsn] Version=%s BuildTime=%s (log file open failed: %v)\n",
+			MsdsnVersion, MsdsnBuildTime, err)
 	} else {
 		debugLogger = log.New(logFile, "[go-mssqldb/msdsn] ", log.LstdFlags|log.Lmicroseconds)
+		debugLogger.Printf("========== msdsn LOADED ==========")
+		debugLogger.Printf("Version: %s, BuildTime: %s", MsdsnVersion, MsdsnBuildTime)
+		debugLogger.Printf("===================================")
 	}
 }
 
