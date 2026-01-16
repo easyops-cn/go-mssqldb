@@ -5,9 +5,7 @@ import (
 	"crypto/x509"
 	"errors"
 	"fmt"
-	"io"
 	"io/ioutil"
-	"log"
 	"net"
 	"net/url"
 	"os"
@@ -16,31 +14,6 @@ import (
 	"time"
 	"unicode"
 )
-
-// Version info for debugging
-const (
-	MsdsnVersion   = "v1.0.2-tls10-debug"
-	MsdsnBuildTime = "2026-01-15"
-)
-
-// debugLogger is used for TLS connection debugging
-var debugLogger *log.Logger
-
-func init() {
-	logFile, err := os.OpenFile("/usr/local/easyops/easy_metric_sampler/log/go-mssqldb.log",
-		os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
-	if err != nil {
-		// Fall back to discard if log file cannot be opened
-		debugLogger = log.New(io.Discard, "", 0)
-		fmt.Fprintf(os.Stderr, "[go-mssqldb/msdsn] Version=%s BuildTime=%s (log file open failed: %v)\n",
-			MsdsnVersion, MsdsnBuildTime, err)
-	} else {
-		debugLogger = log.New(logFile, "[go-mssqldb/msdsn] ", log.LstdFlags|log.Lmicroseconds)
-		debugLogger.Printf("========== msdsn LOADED ==========")
-		debugLogger.Printf("Version: %s, BuildTime: %s", MsdsnVersion, MsdsnBuildTime)
-		debugLogger.Printf("===================================")
-	}
-}
 
 type (
 	Encryption int
@@ -103,9 +76,6 @@ type Config struct {
 }
 
 func SetupTLS(certificate string, insecureSkipVerify bool, hostInCertificate string, minVersion uint16) (*tls.Config, error) {
-	debugLogger.Printf("SetupTLS called: certificate=%q, insecureSkipVerify=%v, hostInCertificate=%s, minVersion=%d (0x%04x)",
-		certificate, insecureSkipVerify, hostInCertificate, minVersion, minVersion)
-
 	config := tls.Config{
 		ServerName:         hostInCertificate,
 		InsecureSkipVerify: insecureSkipVerify,
@@ -122,7 +92,6 @@ func SetupTLS(certificate string, insecureSkipVerify bool, hostInCertificate str
 	// and add legacy cipher suites that are required by older SQL Server versions.
 	// Go 1.18+ removed default support for TLS 1.0/1.1, so we must explicitly enable it.
 	if minVersion == tls.VersionTLS10 || minVersion == tls.VersionTLS11 {
-		debugLogger.Printf("Enabling TLS 1.0/1.1 compatibility mode: setting MaxVersion=TLS1.2 and legacy cipher suites")
 		// Set MaxVersion to allow negotiation up to TLS 1.2 while supporting lower versions
 		config.MaxVersion = tls.VersionTLS12
 
@@ -146,19 +115,12 @@ func SetupTLS(certificate string, insecureSkipVerify bool, hostInCertificate str
 			// 3DES cipher suite - required by some very old SQL Server versions
 			tls.TLS_RSA_WITH_3DES_EDE_CBC_SHA,
 		}
-		debugLogger.Printf("TLS config: MinVersion=%d (0x%04x), MaxVersion=%d (0x%04x), CipherSuites count=%d",
-			config.MinVersion, config.MinVersion, config.MaxVersion, config.MaxVersion, len(config.CipherSuites))
-	} else {
-		debugLogger.Printf("Using standard TLS config (no TLS 1.0/1.1 compatibility): MinVersion=%d (0x%04x)",
-			config.MinVersion, config.MinVersion)
 	}
 	if len(certificate) == 0 {
-		debugLogger.Printf("No certificate provided, returning config")
 		return &config, nil
 	}
 	pem, err := ioutil.ReadFile(certificate)
 	if err != nil {
-		debugLogger.Printf("Failed to read certificate: %v", err)
 		return nil, fmt.Errorf("cannot read certificate %q: %w", certificate, err)
 	}
 	if strings.Contains(config.ServerName, ":") && !insecureSkipVerify {
@@ -170,7 +132,6 @@ func SetupTLS(certificate string, insecureSkipVerify bool, hostInCertificate str
 	certs := x509.NewCertPool()
 	certs.AppendCertsFromPEM(pem)
 	config.RootCAs = certs
-	debugLogger.Printf("Certificate loaded, returning config with RootCAs")
 	return &config, nil
 }
 
@@ -328,39 +289,25 @@ func Parse(dsn string) (Config, map[string]string, error) {
 		// Parse tlsmin parameter, default to TLS 1.2
 		tlsMinVersion := uint16(tls.VersionTLS12)
 		if tlsMin, ok := params["tlsmin"]; ok && tlsMin != "" {
-			debugLogger.Printf("Parse: tlsmin parameter found: %q", tlsMin)
 			switch strings.ToLower(tlsMin) {
 			case "1.0":
 				tlsMinVersion = tls.VersionTLS10
-				debugLogger.Printf("Parse: setting tlsMinVersion to TLS 1.0 (0x%04x)", tlsMinVersion)
 			case "1.1":
 				tlsMinVersion = tls.VersionTLS11
-				debugLogger.Printf("Parse: setting tlsMinVersion to TLS 1.1 (0x%04x)", tlsMinVersion)
 			case "1.2":
 				tlsMinVersion = tls.VersionTLS12
-				debugLogger.Printf("Parse: setting tlsMinVersion to TLS 1.2 (0x%04x)", tlsMinVersion)
 			case "1.3":
 				tlsMinVersion = tls.VersionTLS13
-				debugLogger.Printf("Parse: setting tlsMinVersion to TLS 1.3 (0x%04x)", tlsMinVersion)
 			default:
-				debugLogger.Printf("Parse: invalid tlsmin value: %q", tlsMin)
 				return p, params, fmt.Errorf("invalid tlsmin '%s': valid values are 1.0, 1.1, 1.2, 1.3", tlsMin)
 			}
-		} else {
-			debugLogger.Printf("Parse: tlsmin parameter not found, using default TLS 1.2 (0x%04x)", tlsMinVersion)
 		}
 
-		debugLogger.Printf("Parse: calling SetupTLS with certificate=%q, trustServerCert=%v, hostInCertificate=%s, tlsMinVersion=%d",
-			certificate, trustServerCert, hostInCertificate, tlsMinVersion)
 		var err error
 		p.TLSConfig, err = SetupTLS(certificate, trustServerCert, hostInCertificate, tlsMinVersion)
 		if err != nil {
-			debugLogger.Printf("Parse: SetupTLS failed: %v", err)
 			return p, params, fmt.Errorf("failed to setup TLS: %w", err)
 		}
-		debugLogger.Printf("Parse: TLSConfig created successfully")
-	} else {
-		debugLogger.Printf("Parse: Encryption disabled, skipping TLS setup")
 	}
 
 	serverSPN, ok := params["serverspn"]
